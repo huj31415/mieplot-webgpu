@@ -208,8 +208,8 @@ f32filterable: ${f32filterable}
   const renderTimingHelper = new TimingHelper(device);
 
   downloadImg = () => {
-    uni.set("toneMapping", [0]);
-    uni.update(device.queue);
+    // uni.set("toneMapping", [0]);
+    // uni.update(device.queue);
     
     const encoder = device.createCommandEncoder();
     encoder.copyTextureToBuffer(
@@ -274,10 +274,9 @@ f32filterable: ${f32filterable}
       texture.destroy();
       copyBuffer.destroy();
     });
-    uni.set("toneMapping", [gui.io.toneMapping.value ? 1 : 0]);
-    uni.update(device.queue);
+    // uni.set("toneMapping", [gui.io.toneMapping.value ? 1 : 0]);
+    // uni.update(device.queue);
     uni.valuesChanged = true; // force rerender
-    gui.io.normalize.checked = true;
   }
 let frameCounter = 0;
   function render() {
@@ -298,7 +297,7 @@ uni.update(device.queue);
       
       MieComputePass.setPipeline(MieCSPipeline);
       MieComputePass.setBindGroup(0, MieCSBindgroup);
-      MieComputePass.dispatchWorkgroups(Math.ceil(TexSize[0] / 16), Math.ceil(TexSize[1] / 16));
+      MieComputePass.dispatchWorkgroups(Math.ceil(TexSize[0] / WGSIZE), Math.ceil(TexSize[1] / WGSIZE));
       
       MieComputePass.end();
 

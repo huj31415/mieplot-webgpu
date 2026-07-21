@@ -1,7 +1,7 @@
 
 
 const uni = new Uniforms();
-uni.addUniform("resolution", "vec2f");
+// uni.addUniform("resolution", "vec2f");
 uni.addUniform("lutRes", "vec2f");
 uni.addUniform("frameCounter", "f32");
 uni.addUniform("toneMapping", "f32");
@@ -16,7 +16,8 @@ const canvas = document.getElementById("_canvas");
 canvas.style.imageRendering = "pixelated";
 
 const gui = new GUI("WebGPU MiePlot", canvas);
-const TexSize = [1024, 512];
+const TexSize = [512, 256];
+const WGSIZE = 8;
 
 const resizeCanvas = (value = window.devicePixelRatio) => {
   // pixelRatio = value / window.innerHeight || 1;
@@ -24,7 +25,7 @@ const resizeCanvas = (value = window.devicePixelRatio) => {
   canvas.style.width = `${minDim * TexSize[0]}px`;
   canvas.style.height = `${minDim * TexSize[1]}px`;
   canvas.width = canvas.height = value;
-  uni.set("resolution", [value]);
+  // uni.set("resolution", [value]);
   gui.io.res([value, value]);
 }
 

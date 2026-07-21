@@ -83,12 +83,12 @@ fn n4rand(n: vec3f) -> f32
 // Functions of complex variables.
 fn cmul(l: vec2f,r: vec2f) -> vec2f
 {
-  return vec2f(l.x*r.x-l.y*r.y,l.x*r.y+l.y*r.x);
+  return vec2f(l.x*r.x - l.y*r.y, dot(l, r.yx));
 }
 
 fn cdiv(l: vec2f,r: vec2f) -> vec2f
 {
-  return vec2f(l.x*r.x+l.y*r.y,l.y*r.x-l.x*r.y)/(r.x*r.x+r.y*r.y);
+  return vec2f(dot(l, r), l.y*r.x - l.x*r.y) / dot(r, r);
 }
 
 fn csin(z: vec2f) -> vec2f
@@ -103,7 +103,7 @@ fn ccos(z: vec2f) -> vec2f
 
 fn c_abs(c: vec2f) -> f32
 {
-	return sqrt(c.x*c.x + c.y*c.y);
+	return length(c);
 }
 
 //value range functions, need to rename them
@@ -129,8 +129,8 @@ fn val_log_scale(val: f32, minVal: f32, maxVal: f32) -> f32
 {
   let lowLog = log(minVal) / ln10;
   let highLog = log(maxVal) / ln10;
-  let scale = 1.0 / (highLog - lowLog);
-  let valLogRange = exp(((val / scale) + lowLog) * ln10);
+  let scale = (highLog - lowLog);
+  let valLogRange = exp(fma(val, scale, lowLog) * ln10);
   return valLogRange;
 }
 
@@ -153,61 +153,44 @@ fn linearToLogScale(v: f32, minVal: f32, maxVal: f32) -> f32 {
 // =========================================================================
 // CORRECTED REFRACTIVE INDEX COEFFICIENTS
 // =========================================================================
-// replace with vec3f?
 struct sellmeier_coeffs {
-  B1: f32, B2: f32, B3: f32,
-  C1: f32, C2: f32, C3: f32
+  B: vec3f,
+  C: vec3f
 };
 
 // Distilled water at 21.5°C (Daimon & Masumura 2007) - CORRECTED
 // Valid from 182 nm to 1129 nm
 // Reference: https://doi.org/10.1364/AO.46.003811
 const water_21p5C = sellmeier_coeffs(
-  0.5689093832,   // B1
-  0.1719708856,   // B2  
-  0.02062501582,  // B3
-  0.005110301794, // C1 (in µm²)
-  0.01825180155,  // C2 (in µm²)
-  0.02624158904   // C3 (in µm²)
+  vec3f(0.5689093832, 0.1719708856, 0.02062501582),
+  vec3f(0.005110301794, 0.01825180155, 0.02624158904)
 );
 
 // Distilled water at 20.0°C (Daimon & Masumura 2007)
 const water_20C = sellmeier_coeffs(
-  0.5684027565,
-  0.1726177391,
-  0.02086189578,
-  0.005101829712,
-  0.01821153936,
-  0.02620722293
+  vec3f(0.5684027565, 0.1726177391, 0.02086189578),
+  vec3f(0.005101829712, 0.01821153936, 0.02620722293)
 );
 
 // Your original coefficients (source unknown - possibly 19°C?)
 const water_original = sellmeier_coeffs(
-  0.5672526103, 0.1736581125, 0.02121531502,
-  0.005085550461, 0.01814938654, 0.02617260739
+  vec3f(0.5672526103, 0.1736581125, 0.02121531502),
+  vec3f(0.005085550461, 0.01814938654, 0.02617260739)
 );
 
 // BK-7 borosilicate crown glass - CORRECT
 // Standard Schott coefficients
 const glass_BK7 = sellmeier_coeffs(
-  1.03961212,     // B1
-  0.231792344,    // B2
-  1.01046945,     // B3
-  0.00600069867,  // C1 (in µm²)
-  0.0200179144,   // C2 (in µm²)
-  103.560653      // C3 (in µm²)
+  vec3f(1.03961212, 0.231792344, 1.01046945),
+  vec3f(0.00600069867, 0.0200179144, 103.560653)
 );
 
 // Air at 15°C, 101325 Pa - SIMPLIFIED
 // Note: Air is better modeled with Edlén or Ciddor equations
 // This is a simplified 2-term Sellmeier for visible range
 const air_15C = sellmeier_coeffs(
-  0.05792105,     // B1
-  0.00167917,     // B2
-  0.0,            // B3 (not used)
-  0.00238185,     // C1 (in µm²)
-  0.0000767,      // C2 (in µm²)  
-  0.0             // C3 (not used)
+  vec3f(0.05792105, 0.00167917, 0.0),
+  vec3f(0.00238185, 0.0000767, 0.0)
 );
 
 // =========================================================================
@@ -216,10 +199,11 @@ const air_15C = sellmeier_coeffs(
 // Lambda must be in micrometers!
 fn sellmeier(s: sellmeier_coeffs, lambda_um: f32) -> f32 {
   let l2 = lambda_um * lambda_um;
-  let n2 = 1.0
-      + (s.B1 * l2) / (l2 - s.C1)
-      + (s.B2 * l2) / (l2 - s.C2)
-      + (s.B3 * l2) / (l2 - s.C3);
+  // let n2 = 1.0
+  //     + (s.B1 * l2) / (l2 - s.C1)
+  //     + (s.B2 * l2) / (l2 - s.C2)
+  //     + (s.B3 * l2) / (l2 - s.C3);
+  let n2 = 1.0 + dot(s.B * l2 / (l2 - s.C), vec3f(1.0));
   return sqrt(max(n2, 1.0)); // Prevent sqrt of negative
 }
 
@@ -358,91 +342,89 @@ fn xyz2rgb(XYZ: vec3f) -> vec3f {
 
 fn mie(x: f32, m: vec2f, mu: f32) -> mat4x2f
 {
-  var y=x*m;
-  var pi0=0.0; var pi1=1.0; var pi: f32;
-  var s1=vec2f(0.0,0.0);
-  var s2=vec2f(0.0,0.0);
+  var y = x * m;
+  var pi0 = 0.0; var pi1=1.0; var pi: f32;
+  var s1 = vec2f(0.0,0.0);
+  var s2 = vec2f(0.0,0.0);
   var tau: f32;
-  var psi0= cos(x);
-  var psi1= sin(x);
-  var chi0=-sin(x);
-  var chi1= cos(x);
-  var xi1=vec2f(psi1,-chi1);
-  var qext=0.0;
-  var qsca=0.0;
-  var gsca=0.0;
-  var an=vec2f(0.0,0.0);
-  var bn=vec2f(0.0,0.0);
+  var psi0 = cos(x);
+  var psi1 = sin(x);
+  var chi0 =-psi1;
+  var chi1 = psi0;
+  var xi1 = vec2f(psi1,-chi1);
+  // var qext = 0.0;
+  var qsca = 0.0;
+  var gsca = 0.0;
+  var an = vec2f(0.0,0.0);
+  var bn = vec2f(0.0,0.0);
   var an1 = vec2f(0.0,0.0);
-  var bn1 = vec2f(0.0,0.0); 
-// #if 0
-//     vec2f D=cdiv(csin(y)-cmul(y,cmul(y,csin(y))+ccos(y)),cmul(y,cmul(y,ccos(y))-csin(y)));
-// #else
+  var bn1 = vec2f(0.0,0.0);
+  
+  // vec2f D=cdiv(csin(y)-cmul(y,cmul(y,csin(y))+ccos(y)),cmul(y,cmul(y,ccos(y))-csin(y)));
   // The original expression is
   //     D=(sin(z)-z*cos(z)-z*z*sin(z))/(z*z*cos(z)-z*sin(z))
   // which we evaluate avoiding overflow.
-  let tc=cos(y.x);
-  let ts=sin(y.x);
+  let tc = cos(y.x);
+  let ts = sin(y.x);
   
-  let hc=1.0+exp(-2.0*y.y);
-  let hs=1.0-exp(-2.0*y.y);
+  let hc = 1.0 + exp(-2.0 * y.y);
+  let hs = 1.0 - exp(-2.0 * y.y);
 
-  let cs=vec2f(ts*hc, tc*hs);
-  let cc=vec2f(tc*hc,-ts*hs);
-  var D=cdiv(cs-cmul(y,cmul(y,cs)+cc),cmul(y,cmul(y,cc)-cs));
+  let cs = vec2f(ts*hc, tc*hs);
+  let cc = vec2f(tc*hc,-ts*hs);
+  var D = cdiv(cs - cmul(y, cmul(y, cs) + cc), cmul(y, cmul(y, cc) - cs));
 // #endif
 
-  let nstop=i32(round(x+4.0*pow(x,0.3333)+2.0));
+  let nstop = i32(round(x + 4.0 * pow(x, 0.3333) + 2.0));
   
-  for(var k = 0; k < nstop; k++)
-  {
-    let n=f32(k+1);
-    let f_n=(2.0*n+1.0)/(n*(n+1.0));
+  for (var k = 0; k < nstop; k++) {
+    let n = f32(k + 1);
+    let f_n = (2.0 * n + 1.0) / (n * (n + 1.0));
     
-    let psi=(2.0*n-1.0)*psi1/x-psi0;
-    let chi=(2.0*n-1.0)*chi1/x-chi0;
-    let xi=vec2f(psi,-chi);
-    
+    let psi = (2.0 * n - 1.0) * psi1 / x - psi0;
+    let chi = (2.0 * n - 1.0) * chi1 / x - chi0;
+    let xi = vec2f(psi,-chi);
 
-    let an1=an;
-    let bn1=bn;
+    let an1 = an;
+    let bn1 = bn;
 
-    
     //Compute AN and BN:
-    an=(cdiv(D,m)+vec2f(n/x,0.0))*psi-vec2f(psi1,0.0);
-    an=cdiv(an,(cmul((cdiv(D,m)+vec2f(n/x,0.0)),xi)-xi1));
-    bn=(cmul(m,D)+vec2f(n/x,0.0))*psi-vec2f(psi1,0.0);
-    bn=cdiv(bn,(cmul(cmul(m,D)+vec2f(n/x,0.0),xi)-xi1));
+    let D_m = cdiv(D, m);
+    let md = cmul(m, D);
+    an = (D_m + vec2f(n/x, 0.0)) * psi - vec2f(psi1, 0.0);
+    an = cdiv(an, (cmul(D_m + vec2f(n / x, 0.0), xi) - xi1));
+    bn = (md + vec2f(n/x, 0.0)) * psi - vec2f(psi1, 0.0);
+    bn = cdiv(bn, (cmul(md + vec2f(n / x, 0.0), xi) - xi1));
     
     //Augment sums for Qsca and g=<cos(theta)>
-    qext=qext+((2.*n+1.)*(an.x+bn.x));
-    qsca=qsca+((2.*n+1.)*(dot(an,an)+dot(bn,bn)));
-    gsca=gsca+(((2.*n+1.)/(n*(n+1.)))* (an.x*bn.x+an.y*bn.y));
-    gsca=gsca+(((n-1.)*(n+1.)/n)*(an1.x*an.x+an1.y*an.y+ bn1.x*bn.x+bn1.y*bn.y));
+    // qext = qext + ((2. * n + 1.) * (an.x + bn.x));
+    qsca = qsca + ((2. * n + 1.) * (dot(an, an) + dot(bn, bn)));
+    gsca = gsca + ((2. * n + 1.) / (n * (n + 1.)) * dot(an, bn));
+    gsca = gsca + ((n - 1.) * (n + 1.) / n) * (dot(an1, an) + dot(bn1, bn));
     
-    pi=pi1;
-    tau=n*mu*pi-(n+1.)*pi0;
-    s1=s1+f_n*(an*pi+bn*tau);
-    s2=s2+f_n*(an*tau+bn*pi);
+    pi = pi1;
+    tau = n * mu * pi - (n + 1.) * pi0;
+    s1 = s1 + f_n * (an * pi + bn * tau);
+    s2 = s2 + f_n * (an * tau + bn * pi);
     
-    psi0=psi1;
-    psi1=psi;
-    chi0=chi1;
-    chi1=chi;
-    xi1=vec2f(psi1,-chi1);
+    psi0 = psi1;
+    psi1 = psi;
+    chi0 = chi1;
+    chi1 = chi;
+    xi1 = vec2f(psi1, -chi1);
     
-    pi1=((2.*n+1.)*mu*pi-(n+1.)*pi0)/n;
-    pi0=pi;
+    pi1 = ((2. * n + 1.) * mu * pi - (n + 1.) * pi0) / n;
+    pi0 = pi;
     
-    D=cdiv(vec2f(1.0,0.0),(cdiv(vec2f(n+1.,0.0),y)-D))-cdiv(vec2f(n+1.,0.0),y);
+    D = cdiv(vec2f(1.0, 0.0), (cdiv(vec2f(n + 1., 0.0), y) - D)) - cdiv(vec2f(n + 1., 0.0), y);
   }
   
-  gsca=2.0*(gsca)/qsca;
-  qsca=(2.0/(x*x))*qsca;    
-  qext = (4.0 / (x * x)) * s1.x;
-  let qback = pow(c_abs(s1) / x,2.0) / pi;
+  gsca = 2.0 * (gsca) / qsca;
+  // qsca = (2.0 / (x * x)) * qsca;    
+  // qext = (4.0 / (x * x)) * s1.x;
+  let qback = pow(c_abs(s1) / x, 2.0) / pi;
   
-  return mat4x2f(s1,s2,vec2f(qext,qsca),vec2f(gsca,qback));
+  return mat4x2f(s1, s2, (2.0 / (x * x)) * vec2f(2.0 * s1.x, qsca), vec2f(gsca, qback));
 }
 
 // Criterion, from [2], for when accuracy of upwards recurrence is
@@ -462,9 +444,9 @@ fn f2_test(x: f32, m: vec2f) -> bool
 {
   let t=m.x;
   return
-    x>=1.0&&x<10000.0&&
-    t>=1.05&&t<=9.25&&
-    abs(m.y)<3.9+t*(-10.8+t*13.78);
+    x >= 1.0 && x < 10000.0 &&
+    t >= 1.05 && t <= 9.25 &&
+    abs(m.y) < 3.9 + t * (-10.8 + t * 13.78);
 }
 
 // Approximation of scattering for small x.
@@ -472,25 +454,35 @@ fn f2_test(x: f32, m: vec2f) -> bool
 // Meaning of input and output are the same as above.
 fn mie_rayleigh(x: f32, m: vec2f, mu: f32) -> mat4x2f
 {
-  let D=cmul(m,m)+vec2f(2.0,0.0)
-    +(vec2f(1.0,0.0)-7.0/10.0*cmul(m,m))*x*x
-    -x*x*x*x/1400.0*(cmul(cmul(m,m),(8.0*cmul(m,m)-vec2f(385.0,0.0)))+vec2f(350.0,0.0))
-    +x*x*x*cmul(vec2f(0.0,2.0/3.0),cmul(m,m)-vec2f(1.0,0.0))*(1.0-1.0/10.0*x*x);
-  let a1=cmul(cmul(vec2f(0.0,2.0/3.0),cmul(m,m)-vec2f(1.0,0.0)),
-    cdiv(vec2f(1.0-1.0/10.0*x*x,0.0)+x*x*x*x/1400.0*(4.0*cmul(m,m)+vec2f(5.0,0.0)),D));
-  let b1=cmul(cmul(vec2f(0.0,x*x/45.0),(cmul(m,m)-vec2f(1.0,0.0))),cdiv(
-    vec2f(1.0,0.0)+x*x/70.0*(2.0*cmul(m,m)-vec2f(5.0,0.0)),
-    vec2f(1.0,0.0)-x*x/30.0*(2.0*cmul(m,m)-vec2f(5.0,0.0))));
-  let a2=cmul(cmul(vec2f(0.0,x*x/15.0),(cmul(m,m)-vec2f(1.0,0.0))),cdiv(
-    vec2f(1.0-x*x/14.0,0.0),
-    2.0*cmul(m,m)+vec2f(3.0,0.0)-x*x/14.0*(2.0*cmul(m,m)-vec2f(7.0,0.0))));
-  let T=dot(a1,a1)+dot(b1,b1)+5.0/3.0*dot(a2,a2);
-  let qext=6.0*x*(a1+b1+5.0/3.0*a2).x;
-  let qsca=6.0*x*x*x*x*T;
-  let gsca=1.0/T*dot(a1,a2+b1);
-  let s1=3.0/2.0*x*x*x*(a1+(b1+5.0/3.0*a2)*mu);
-  let s2=3.0/2.0*x*x*x*(b1+a1*mu+5.0/3.0*a2*(2.0*mu*mu-1.0));
-  return mat4x2(s1,s2,vec2f(qext,qsca),vec2f(gsca,0.0));
+  let m2 = cmul(m, m);
+  let x2 = x*x;
+  let x3 = x2*x;
+  let x4 = x3*x;
+  let D = m2 + vec2f(2.0,0.0)
+    + (vec2f(1.0,0.0) - 0.7 * m2) * x2
+    - x4 / 1400.0 * (cmul(m2, (8.0 * m2 - vec2f(385.0,0.0))) + vec2f(350.0, 0.0))
+    + x3* cmul(vec2f(0.0, 2.0/3.0), m2 - vec2f(1.0,0.0)) * (1.0 - 0.1 * x2);
+
+  let a1 = cmul(cmul(vec2f(0.0, 2.0/3.0), m2 - vec2f(1.0,0.0)),
+    cdiv(vec2f(1.0 - 0.1 * x2, 0.0) + x4 / 1400.0 * (4.0 * m2 + vec2f(5.0, 0.0)), D));
+
+  let b1 = cmul(cmul(vec2f(0.0, x2 / 45.0), (m2 - vec2f(1.0, 0.0))), cdiv(
+    vec2f(1.0,0.0) + x2 / 70.0 * (2.0 * m2 - vec2f(5.0, 0.0)),
+    vec2f(1.0,0.0) - x2 / 30.0 * (2.0 * m2 - vec2f(5.0, 0.0))
+  ));
+
+  let a2 = cmul(cmul(vec2f(0.0, x2 / 15.0), (m2 - vec2f(1.0,0.0))), cdiv(
+    vec2f(1.0 - x2 / 14.0, 0.0),
+    2.0 * m2 + vec2f(3.0, 0.0) - x2 / 14.0 * (2.0 * m2 - vec2f(7.0,0.0))
+  ));
+
+  let T = dot(a1, a1) + dot(b1, b1) + 5.0 / 3.0 * dot(a2, a2);
+  let qext = x * (a1 + b1 + 5.0/3.0 * a2).x;
+  let qsca = x4 * T;
+  let gsca = 1.0 / T * dot(a1, a2+b1);
+  let s1 = 3.0/2.0 * x3 * (a1 + (b1 + 5.0/3.0 * a2) * mu);
+  let s2 = 3.0/2.0 * x3 * (b1 + a1 * mu + 5.0/3.0 * a2 * (2.0 * mu * mu - 1.0));
+  return mat4x2(s1, s2, 6.0 * vec2f(qext,qsca), vec2f(gsca,0.0));
 }
 
 //==============================================================================
@@ -505,11 +497,9 @@ fn mieplot(
   // -------------------------------------------------------------------------
   // 1. Get complex refractive index of water droplet
   // -------------------------------------------------------------------------
-  var m = water_complex_refractive_index(wavelength_nm);
-  
   // For cloud droplets in air, we need RELATIVE refractive index
   let n_air = 1.000293;
-  m = vec2f(m.x / n_air, m.y / n_air);
+  let m = water_complex_refractive_index(wavelength_nm) / n_air;
   
   // -------------------------------------------------------------------------
   // 2. Calculate size parameter and scattering angle
@@ -524,7 +514,7 @@ fn mieplot(
   // let F = (x < 0.1) 
   //   ? mie_rayleigh(x, m, mu) 
   //   : mie(x, m, mu);
-  var F: mat4x2f; // = select(mie(x, m, mu), mie_rayleigh(x, m, mu) , x < 0.1);
+  var F: mat4x2f;
   if (x < 0.1) {
     F = mie_rayleigh(x, m, mu);
   } else {
@@ -601,7 +591,7 @@ fn validate_normalization(wavelength_nm: f32, r_um: f32) -> f32
 // Main Image
 // ============================================================================
 
-@compute @workgroup_size(16, 16)
+@compute @workgroup_size(${WGSIZE}, ${WGSIZE})
 fn main(@builtin(global_invocation_id) gid: vec3u) {
   let uv = vec2f(gid.xy) / uni.lutRes;
   let seed = vec3f(uv, uni.frameCounter);
@@ -620,9 +610,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let size = val_log_scale(s, MIN_SIZE, MAX_SIZE);
   
   // -------------------------------------------------------------------------
-  // 3. Sample scattering angle (linear mapping)
+  // 3. Sample scattering angle
   // -------------------------------------------------------------------------
-  let theta = val_lin_scale(uv.x, MIN_ANGLE, MAX_ANGLE) * PI / 180.0;
+  let theta = PI - acos(uv.x * 2.0 - 1.0);
+  // let theta = 0.5 * (1 - cos(PI * uv.x)) * PI;
+  // let theta = val_lin_scale(uv.x, MIN_ANGLE, MAX_ANGLE) * PI / 180.0;
   
   // -------------------------------------------------------------------------
   // 4. Calculate Mie phase function
@@ -633,20 +625,22 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   // -------------------------------------------------------------------------
   // 5. Convert to XYZ color space
   // -------------------------------------------------------------------------
-  var XYZ = wavelength2xyzLut(wavelength) * phase;
+  var RGB = xyz2rgb(wavelength2xyzLut(wavelength) * phase);
+  // wavelength2xyzLut(wavelength);
   
   // -------------------------------------------------------------------------
   // 6. Progressive accumulation (Monte Carlo integration)
   // -------------------------------------------------------------------------
-  let previous = textureLoad(output, gid.xy).xyz;
+  let previous = textureLoad(output, gid.xy).rgb;
   let blend = 1.0 / f32(uni.frameCounter + 1);
-  XYZ = mix(previous, XYZ, blend);
+  RGB = mix(previous, RGB, blend);
 
   // -------------------------------------------------------------------------
   // 7. Output
   // -------------------------------------------------------------------------
   //test_normalization(fragColor, fragCoord);
-  textureStore(output, gid.xy, vec4f(XYZ, 1.0));
+  textureStore(output, gid.xy, vec4f(RGB, 1.0));
+  // textureStore(output, gid.xy, vec4f(wavelength2xyzLut(uv.x * (MAX_WAVELENGTH - MIN_WAVELENGTH) + MIN_WAVELENGTH), 1.0));
 }
 `;
 
@@ -720,12 +714,12 @@ fn vs(@builtin(vertex_index) vIdx: u32) -> VertexOut {
 
 @fragment
 fn fs(input: VertexOut) -> @location(0) vec4f {
-  // return log(textureSample(freqTex, texSampler, input.fragCoord * (uni.resolution / uni.resolution.y))) / 1e1;
   let color = textureSample(output, texSampler, input.fragCoord).rgb;
   if (uni.toneMapping == 1) {
     return vec4f(saturate(AgX(color)), 1.0);
   }
-  return vec4f(1.0 - exp(-color), 1.0);
+  // return vec4f(1.0 - exp(-color), 1.0);
+  return vec4f(color, 1.0);
 }
 `;
 
