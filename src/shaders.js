@@ -16,7 +16,7 @@ ${uni.uniformStruct}
 // are largest observed rain droplets.
 
 const MIN_SIZE = 0.02; // r in micron (top of LUT)
-const MAX_SIZE = 2000.0; // r in micron (bottom of LUT)
+const MAX_SIZE = 1800.0; //2000.0; // r in micron (bottom of LUT)
 const SIZE_JITTER = 0.025; // droplet size jitter (approximates a collection of droplets)
 
 const MIN_WAVELENGTH = 380.0; // 𝜆 minimum light wavelength in nanometer; 0.38 micron
@@ -127,10 +127,10 @@ fn linearScale(v: f32, minVal: f32, maxVal: f32) -> f32 {
 //0-1 value to min-max log range
 fn val_log_scale(val: f32, minVal: f32, maxVal: f32) -> f32
 {
-  let lowLog = log(minVal) / ln10;
-  let highLog = log(maxVal) / ln10;
+  let lowLog = log(minVal);
+  let highLog = log(maxVal);
   let scale = (highLog - lowLog);
-  let valLogRange = exp(fma(val, scale, lowLog) * ln10);
+  let valLogRange = exp(fma(val, scale, lowLog));
   return valLogRange;
 }
 
@@ -373,7 +373,6 @@ fn mie(x: f32, m: vec2f, mu: f32) -> mat4x2f
   let cs = vec2f(ts*hc, tc*hs);
   let cc = vec2f(tc*hc,-ts*hs);
   var D = cdiv(cs - cmul(y, cmul(y, cs) + cc), cmul(y, cmul(y, cc) - cs));
-// #endif
 
   let nstop = i32(round(x + 4.0 * pow(x, 0.3333) + 2.0));
   
@@ -398,9 +397,9 @@ fn mie(x: f32, m: vec2f, mu: f32) -> mat4x2f
     
     //Augment sums for Qsca and g=<cos(theta)>
     // qext = qext + ((2. * n + 1.) * (an.x + bn.x));
-    qsca = qsca + ((2. * n + 1.) * (dot(an, an) + dot(bn, bn)));
-    gsca = gsca + ((2. * n + 1.) / (n * (n + 1.)) * dot(an, bn));
-    gsca = gsca + ((n - 1.) * (n + 1.) / n) * (dot(an1, an) + dot(bn1, bn));
+    qsca += ((2. * n + 1.) * (dot(an, an) + dot(bn, bn)));
+    gsca += ((2. * n + 1.) / (n * (n + 1.)) * dot(an, bn));
+    gsca += ((n - 1.) * (n + 1.) / n) * (dot(an1, an) + dot(bn1, bn));
     
     pi = pi1;
     tau = n * mu * pi - (n + 1.) * pi0;
@@ -416,37 +415,16 @@ fn mie(x: f32, m: vec2f, mu: f32) -> mat4x2f
     pi1 = ((2. * n + 1.) * mu * pi - (n + 1.) * pi0) / n;
     pi0 = pi;
     
-    D = cdiv(vec2f(1.0, 0.0), (cdiv(vec2f(n + 1., 0.0), y) - D)) - cdiv(vec2f(n + 1., 0.0), y);
+    let n1_y = cdiv(vec2f(n + 1., 0.0), y);
+    D = cdiv(vec2f(1.0, 0.0), (n1_y - D)) - n1_y;
   }
   
   gsca = 2.0 * (gsca) / qsca;
   // qsca = (2.0 / (x * x)) * qsca;    
   // qext = (4.0 / (x * x)) * s1.x;
-  let qback = pow(c_abs(s1) / x, 2.0) / pi;
+  let qback = pow(c_abs(s1) / x, 2.0) / PI;
   
   return mat4x2f(s1, s2, (2.0 / (x * x)) * vec2f(2.0 * s1.x, qsca), vec2f(gsca, qback));
-}
-
-// Criterion, from [2], for when accuracy of upwards recurrence is
-// good enough for Qext and Qsca.
-fn f1_test(x: f32, m: vec2f) -> bool
-{
-  let t=m.x;
-  return
-    x>=1.0&&x<10000.0&&
-    t>=1.05&&t<=9.25&&
-    abs(m.y)<-8.0+t*t*(26.22+t*(-0.4474+t*t*t*(0.00204+t*-0.000175)));
-}
-
-// Criterion, from [2], for when accuracy of upwards recurrence is
-// good enough for S1 and S2.
-fn f2_test(x: f32, m: vec2f) -> bool
-{
-  let t=m.x;
-  return
-    x >= 1.0 && x < 10000.0 &&
-    t >= 1.05 && t <= 9.25 &&
-    abs(m.y) < 3.9 + t * (-10.8 + t * 13.78);
 }
 
 // Approximation of scattering for small x.
@@ -482,7 +460,7 @@ fn mie_rayleigh(x: f32, m: vec2f, mu: f32) -> mat4x2f
   let gsca = 1.0 / T * dot(a1, a2+b1);
   let s1 = 3.0/2.0 * x3 * (a1 + (b1 + 5.0/3.0 * a2) * mu);
   let s2 = 3.0/2.0 * x3 * (b1 + a1 * mu + 5.0/3.0 * a2 * (2.0 * mu * mu - 1.0));
-  return mat4x2(s1, s2, 6.0 * vec2f(qext,qsca), vec2f(gsca,0.0));
+  return mat4x2f(s1, s2, 6.0 * vec2f(qext,qsca), vec2f(gsca,0.0));
 }
 
 //==============================================================================
@@ -492,7 +470,7 @@ fn mieplot(
   wavelength_nm: f32,   // wavelength in nm (e.g., 380-700)
   theta: f32,           // scattering angle in radians (0 to π)
   r_um: f32             // particle radius in micrometers
-) -> f32
+) -> vec2f // f32
 {
   // -------------------------------------------------------------------------
   // 1. Get complex refractive index of water droplet
@@ -523,6 +501,7 @@ fn mieplot(
   let s1 = F[0];
   let s2 = F[1];
   let Qsca = F[2].y;
+  let Qext = F[2].x;
   
   // -------------------------------------------------------------------------
   // 4. Calculate scattered intensities
@@ -548,17 +527,11 @@ fn mieplot(
   
   let k = (2.0 * PI) / lambda_um;
   
-  // BEFORE (WRONG - missing factor of 2):
-  // let phase = (2.0 / (k*k * r_um*r_um * Qsca)) * (i1 + i2) * 0.5;
-  
-  // AFTER (CORRECT):
-  // Remove the extra * 0.5, OR equivalently multiply by 2:
   let phase = (2.0 / (k*k * r_um*r_um * Qsca)) * (i1 + i2);
+  // let W = PI * r_um*r_um * Qsca;
+  // let phase = (i1 + i2) * 0.5 / W;
   
-  // Alternative equivalent form:
-  // let phase = (4.0 / (k*k * r_um*r_um * Qsca)) * (i1 + i2) * 0.5;
-  
-  return max(phase, 0.0);
+  return max(vec2f(phase, Qext), vec2f(0.0));
 }
 
 // -------------------------------------------------------------------------
@@ -575,7 +548,7 @@ fn validate_normalization(wavelength_nm: f32, r_um: f32) -> f32
   for (var i = 0; i < N; i++)
   {
     let theta = (f32(i) + 0.5) / f32(N) * PI;
-    let phase = mieplot(wavelength_nm, theta, r_um);
+    let phase = mieplot(wavelength_nm, theta, r_um).x;
     sum += phase * sin(theta);
   }
   
@@ -587,59 +560,128 @@ fn validate_normalization(wavelength_nm: f32, r_um: f32) -> f32
   return integral;
 }
 
+// -------------------------------------------------------------------------
+// Test multiple cases
+// -------------------------------------------------------------------------
+fn test_normalization(fragCoord: vec2f) -> vec4f
+{
+  let uv = fragCoord / uni.lutRes;
+  
+  // Test different particle sizes and wavelengths
+  let wavelength = mix(400.0, 700.0, uv.x);
+  let size = mix(1.0, 20.0, uv.y);
+  
+  let integral = validate_normalization(wavelength, size);
+  
+  // Visualize error
+  let error = abs(integral - 1.0);
+  
+  var color: vec3f;
+  if (error < 0.01) {
+    color = vec3f(0.0, 1.0, 0.0);  // Green: good
+  } else if (error < 0.05) {
+    color = vec3f(1.0, 1.0, 0.0);  // Yellow: acceptable
+  } else {
+    color = vec3f(1.0, 0.0, 0.0);  // Red: bad
+  }
+  
+  // Show the actual integral value
+  
+  // Debug: show exact value in a specific pixel
+  // if (distance(fragCoord, vec2f(10.0, 10.0)) < 1.0) {
+  //   return vec4f(vec3f(integral), 1.0);
+  // }
+  return vec4f(color * integral, 1.0);
+}
+
+
+// x: input u, y: output (angle / PI)
+const points = array<vec2f, 2>(
+  vec2f(0.2, 0.2),
+  vec2f(0.4, 0.6)
+);
+const m0 = points[0].y / points[0].x;
+const m1 = (points[1].y - points[0].y) / (points[1].x - points[0].x);
+const m2 = (1.0 - points[1].y) / (1.0 - points[1].x);
+
+fn EncodeAngle(u: f32) -> f32 {
+  if (u < points[0].x) {
+    return m0 * u;
+  }
+  if (u < points[1].x) {
+    return points[0].y + m1 * (u - points[0].x);
+  }
+  return points[1].y + m2 * (u - points[1].x);
+}
+
 // ============================================================================
 // Main Image
 // ============================================================================
 
+const bias = 5.0;
+const scaling = PI / log(bias + 1.0);
+const golden = 0.5 * (sqrt(5.0) - 1.0);
+
 @compute @workgroup_size(${WGSIZE}, ${WGSIZE})
 fn main(@builtin(global_invocation_id) gid: vec3u) {
   let uv = vec2f(gid.xy) / uni.lutRes;
-  let seed = vec3f(uv, uni.frameCounter);
+  let seed = vec3f(uv.xy, uni.frameCounter);
   
   // -------------------------------------------------------------------------
   // 1. Sample wavelength uniformly across visible spectrum
   // -------------------------------------------------------------------------
-  let wavelength = mix(MIN_WAVELENGTH, MAX_WAVELENGTH, nrand(seed));
+  let wavelength = mix(MIN_WAVELENGTH, MAX_WAVELENGTH, ((uni.frameCounter + nrand(seed)) * golden) % 1.0);
+  // let wavelength = mix(MIN_WAVELENGTH, MAX_WAVELENGTH, select((uni.frameCounter + nrand(seed)) * golden) % 1.0, (uni.frameCounter * 1e-3) % 1, uni.frameCounter <= 1000));
+  // let wavelength = mix(MIN_WAVELENGTH, MAX_WAVELENGTH, nrand(seed));
   
   // -------------------------------------------------------------------------
   // 2. Sample particle size on logarithmic scale with jitter
   // -------------------------------------------------------------------------
   let rn = n4rand(seed);
-  var s = saturate((1.0 - uv.y) + (rn * 2.0 - 1.0) * SIZE_JITTER);
-  // s = clamp(s, 0.0, 1.0);
+  var s = ((1.0 - uv.y) + (rn * 2.0 - 1.0) * SIZE_JITTER);
   let size = val_log_scale(s, MIN_SIZE, MAX_SIZE);
   
   // -------------------------------------------------------------------------
   // 3. Sample scattering angle
   // -------------------------------------------------------------------------
-  let theta = PI - acos(uv.x * 2.0 - 1.0);
+  // let theta = PI - acos(uv.x * 2.0 - 1.0);
+  // let theta = PI * (0.5 + 0.5 * tan(0.5 * PI * (uv.x - 0.5)));
+  // let theta = 0.5 * PI * (smoothstep(0.0, 1.0, uv.x) + uv.x);
   // let theta = 0.5 * (1 - cos(PI * uv.x)) * PI;
-  // let theta = val_lin_scale(uv.x, MIN_ANGLE, MAX_ANGLE) * PI / 180.0;
-  
+  // let theta = PI * pow(uv.x, 0.75);
+
+  // inverse is (exp(theta / scaling) - 1) * 0.5 / bias
+  let theta = scaling * log(bias * uv.x + 1.0);
+
+  // let theta = EncodeAngle(uv.x) * PI;
+  // let theta = val_lin_scale(uv.x, MIN_ANGLE, MAX_ANGLE) * PI / 180;
+
   // -------------------------------------------------------------------------
   // 4. Calculate Mie phase function
   // -------------------------------------------------------------------------
-  var phase = mieplot(wavelength, theta, size);
-  phase = max(phase, 0.0);
+  let phase = mieplot(wavelength, theta, size);
+  // phase = max(phase, 0.0);
   
   // -------------------------------------------------------------------------
-  // 5. Convert to XYZ color space
+  // 5. Convert to XYZ->RGB color space
   // -------------------------------------------------------------------------
-  var RGB = xyz2rgb(wavelength2xyzLut(wavelength) * phase);
+  var RGB = vec4f(xyz2rgb(wavelength2xyzLut(wavelength) * phase.x), phase.y);
   // wavelength2xyzLut(wavelength);
   
   // -------------------------------------------------------------------------
   // 6. Progressive accumulation (Monte Carlo integration)
   // -------------------------------------------------------------------------
-  let previous = textureLoad(output, gid.xy).rgb;
-  let blend = 1.0 / f32(uni.frameCounter + 1);
-  RGB = mix(previous, RGB, blend);
+  let previous = textureLoad(output, gid.xy);
+  // let blend = 1.0 / f32(uni.frameCounter + 1);
+  // RGB = mix(previous, RGB, blend);
+  RGB += previous * uni.frameCounter;
+  RGB /= uni.frameCounter + 1;
 
   // -------------------------------------------------------------------------
   // 7. Output
   // -------------------------------------------------------------------------
-  //test_normalization(fragColor, fragCoord);
-  textureStore(output, gid.xy, vec4f(RGB, 1.0));
+  // RGB = test_normalization(vec2f(gid.xy));
+  textureStore(output, gid.xy, RGB);
   // textureStore(output, gid.xy, vec4f(wavelength2xyzLut(uv.x * (MAX_WAVELENGTH - MIN_WAVELENGTH) + MIN_WAVELENGTH), 1.0));
 }
 `;
@@ -714,7 +756,9 @@ fn vs(@builtin(vertex_index) vIdx: u32) -> VertexOut {
 
 @fragment
 fn fs(input: VertexOut) -> @location(0) vec4f {
-  let color = textureSample(output, texSampler, input.fragCoord).rgb;
+  var color = textureSample(output, texSampler, input.fragCoord).rgb;
+  color *= uni.gain;
+  color = mix(vec3f(0.5), color, uni.contrast);
   if (uni.toneMapping == 1) {
     return vec4f(saturate(AgX(color)), 1.0);
   }

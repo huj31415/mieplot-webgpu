@@ -69,7 +69,7 @@ f32filterable: ${f32filterable}
     size: TexSize,
     dimension: "2d",
     format: "rgba32float",
-    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
+    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC,
     label: `${name} texture`
   });
 
@@ -89,18 +89,18 @@ f32filterable: ${f32filterable}
     {}, { width: colorMatchingData.length / 4 }
   );
 
-  storage.whitePointTex = device.createTexture({
-    size: [cieD65_360_830.length],
-    dimension: "1d",
-    format: "r32float",
-    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
-    label: "white point texture"
-  });
-  device.queue.writeTexture(
-    { texture: storage.whitePointTex },
-    cieD65_360_830.buffer,
-    {}, { width: cieD65_360_830.length }
-  );
+  // storage.whitePointTex = device.createTexture({
+  //   size: [cieD65_360_830.length],
+  //   dimension: "1d",
+  //   format: "r32float",
+  //   usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+  //   label: "white point texture"
+  // });
+  // device.queue.writeTexture(
+  //   { texture: storage.whitePointTex },
+  //   cieD65_360_830.buffer,
+  //   {}, { width: cieD65_360_830.length }
+  // );
 
   storage.lutTex = newTexture("lut");
   const views = Object.fromEntries(
@@ -212,39 +212,15 @@ f32filterable: ${f32filterable}
     // uni.update(device.queue);
     
     const encoder = device.createCommandEncoder();
-    encoder.copyTextureToBuffer(
-      { texture: storage.colFreqTex },
-      { buffer: storage.freqBuffer, bytesPerRow: FFTsize * 4 * 4 },
-      TexSize
-    );
-    const normalizePass = encoder.beginComputePass();
-    normalizePass.setPipeline(normalizeComputePipeline);
-    normalizePass.setBindGroup(0, normalizeBindGroup);
-    normalizePass.dispatchWorkgroups(FFTsize, 1, 1);
-    normalizePass.end();
-    
-    const imgDim = gui.io.canvasResolution.value;
-    const texture = device.createTexture({
-      label: "output texture",
-      format: "rgba32float",
-      size: [imgDim, imgDim],
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT,
-    });
     const copyBuffer = device.createBuffer({
       label: "copy buffer",
-      size: imgDim * imgDim * 4 * 4,
+      size: TexSize[0] * TexSize[1] * 4 * 4,
       usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
     });
-    renderPassDescriptor.colorAttachments[0].view = texture.createView();
-    const renderPass = encoder.beginRenderPass(renderPassDescriptor);
-    renderPass.setPipeline(copyRenderPipeline);
-    renderPass.setBindGroup(0, copyRenderBindGroup);
-    renderPass.draw(3);
-    renderPass.end();
     encoder.copyTextureToBuffer(
-      { texture: texture },
-      { buffer: copyBuffer, bytesPerRow: imgDim * 4 * 4 },
-      [imgDim, imgDim]
+      { texture: storage.lutTex },
+      { buffer: copyBuffer, bytesPerRow: TexSize[0] * 4 * 4 },
+      TexSize
     );
     device.queue.submit([encoder.finish()]);
     
@@ -263,7 +239,7 @@ f32filterable: ${f32filterable}
       // Construct a temporary link element off-screen
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `kernel${(runFFT2 && !runIFFT2) ? 'FFT' : 'Tex'}.bin`;
+      anchor.download = `MieLut.bin`;
       
       // Programmatically trigger the native browser download dialog
       anchor.click();
@@ -286,8 +262,9 @@ let frameCounter = 0;
     fps += (1e3 / deltaTime - fps) / filterStrength;
     lastFrameTime = startTime;
     uni.set("frameCounter", [frameCounter++]);
+    gui.io.frameCounter(frameCounter);
 uni.update(device.queue);
-    if (true) {
+    if (true || frameCounter == 1) {
       const encoder = device.createCommandEncoder();
 
       const canvasTexture = context.getCurrentTexture();
@@ -331,5 +308,7 @@ gui.updateAllVisibility();
 
 uni.set("lutRes", TexSize);
 uni.set("toneMapping", [1]);
+uni.set("gain", [1]);
+uni.set("contrast", [1]);
 
 main();
